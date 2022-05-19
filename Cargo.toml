@@ -1,0 +1,17 @@
+[package]
+authors = ["Hess Lewis <hesslewis@gmail.com>"]
+name = "imagery"
+version = "0.1.0"
+description = "Simplify the creation of image variations such as thumbnails from varying media sources"
+homepage = "https://github.com/hrlou/imagery"
+repository = "https://github.com/hrlou/imagery"
+keywords = ["media", "image", "video", "web", "server", "thumbnail"]
+edition = "2021"
+
+[dependencies]
+log = "0.4.14"
+mime = "0.3.0"
+image = "0.24.0"
+# imageproc = "0.22.0"
+dssim-core = "3.2.1"
+ffmpeg-next = "5.0.2"
