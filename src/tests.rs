@@ -1,9 +1,11 @@
 use std::{fs, path::Path};
+use ffmpeg_next::device::input::VideoIter;
 use image::GenericImage;
 
-use crate::video;
+use crate::driver::video;
+use crate::driver::prelude::*;
 
-static TEST_VIDEO: &str = "./tests/test.mp4";
+static TEST_VIDEO: &str = "./tests/test_video.mp4";
 static OUTPUT_DIR: &str = "./output";
 
 #[test]
@@ -20,24 +22,8 @@ fn setup() {
     r.expect("failed to handle output directory");
 }
 
-#[test]
-fn dump_frames() {
-    let mut video = video::Video::new(TEST_VIDEO).expect("failed to get stream from test video");
-    video.setup_stream(None).unwrap();
-
-    let dump = &Path::new(OUTPUT_DIR).join("frame_dump");
-    fs::create_dir_all(dump).expect("failed to create dump path");
-
-    video.process_frames(|frame, index| {
-        let img = video::frame::image(frame).unwrap();
-        let path = dump.join(format!("frame_{:03}.jpg", index));
-        img.save(path).expect("failed to save frame");
-        true
-    }).expect("failed to process frames");
-}
-
-#[test]
-fn get_frame() {
+/*#[test]
+fn conversions() {
     let mut video = video::Video::new(TEST_VIDEO).expect("failed to get stream from test video");
     let select: usize = 10;
     let mut img: video::RgbBuffer = video::RgbBuffer::default();
@@ -53,4 +39,19 @@ fn get_frame() {
 
     let path = &Path::new(OUTPUT_DIR).join("select_frame.png");
     img.save(path).expect("failed to save selected frame");
+}*/
+
+#[test]
+fn dump_frames() {
+    let mut video = video::Video::new(TEST_VIDEO).expect("failed to get stream from test video");
+    video.setup_stream(None).unwrap();
+
+    let dump = &Path::new(OUTPUT_DIR).join("frame_dump");
+    fs::create_dir_all(dump).expect("failed to create dump path");
+
+    video.frames(|frame, index| {
+        let path = dump.join(format!("frame_{:03}.jpg", index));
+        frame.save(path).expect("failed to save frame");
+        true
+    }).expect("failed to process frames");
 }

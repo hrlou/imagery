@@ -5,8 +5,11 @@ version = "0.1.0"
 description = "Simplify the creation of image variations such as thumbnails from varying media sources"
 homepage = "https://github.com/hrlou/imagery"
 repository = "https://github.com/hrlou/imagery"
-keywords = ["media", "image", "video", "web", "server", "thumbnail"]
+keywords = [ "media", "image", "video", "web", "server", "thumbnail" ]
 edition = "2021"
+exclude = [
+    "tests/*",
+]
 
 [dependencies]
 log = "0.4.14"

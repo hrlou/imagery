@@ -1,6 +1,6 @@
 pub mod prelude {
-    pub use crate::imager::{self, prelude::*};
-    pub use crate::video::*;
+    pub use crate::driver::{self, prelude::*};
+    pub use crate::driver::video::*;
 
     pub extern crate ffmpeg_next as ffmpeg;
     pub use ffmpeg::{
@@ -19,8 +19,16 @@ pub mod prelude {
     };
 }
 
+use std::{path::Path};
+// public exposure
+pub use prelude::*;
+pub use ffmpeg::init;
+use std::cell::RefCell;
+
 pub mod frame {
-    use crate::video::prelude::*;
+    use image::DynamicImage;
+
+    use crate::driver::video::prelude::*;
 
     pub fn parse(frame: &Frame) -> Option<Vec<u8>> {
         use std::io::Write;
@@ -46,24 +54,19 @@ pub mod frame {
     
     pub fn image(frame: &Frame) -> Option<RgbBuffer> {    
         match parse(frame) {
-            Some(buf) => RgbBuffer::from_raw(frame.width(), frame.height(), buf),
+            // DynamicImage::
+            // image::DynamicImage::ImageRgb8(())
+            Some(buf) => {
+                RgbBuffer::from_raw(frame.width(), frame.height(), buf)
+            },
             None => None,
         }   
     }
 }
 
-use prelude::*;
-use std::{path::Path};
-
-// public exposure
-pub use crate::imager::RgbBuffer;
-pub use ffmpeg::init;
-
-#[derive(Default)] 
 pub struct Video {
-    pub input: Option<Input>,
-    // pub stream: Option<Stream<'static>>,
-    pub index: Option<usize>,
+    pub input: RefCell<Input>,
+    pub stream_idx: usize,
 }
 
 impl Video {
@@ -74,49 +77,38 @@ impl Video {
         let i = input(&path);
         match i {
             Ok(i) => {
-                let mut stream = Video::default();
-                stream.input = Some(i);
+                let stream = Video {
+                    input: RefCell::new(i),
+                    stream_idx: 0,
+                };
                 Some(stream)
             },
             Err(_) => None,
         }
     }
 
-    fn input(&self) -> Result<&Input, ffmpeg::Error> {
-        match self.input.as_ref() {
-            Some(input) => Ok(input),
-            None => Err(ffmpeg::Error::InvalidData),
-        }
-    }
-
-    fn index(&self) -> Result<usize, ffmpeg::Error> {
-        match self.index {
-            Some(index) => Ok(index),
-            None => return Err(ffmpeg::Error::StreamNotFound),        }
-    }
-
-    fn stream(&self) -> Result<Stream, ffmpeg::Error> {
-        match self.input()?.stream(self.index()?) {
-            Some(stream) => Ok(stream),
-            None => return Err(ffmpeg::Error::StreamNotFound),
-        }
-    }
-
     pub fn setup_stream<'a>(&mut self, kind: Option<MediaType>) -> Result<(), ffmpeg::Error> {
         let kind = kind.unwrap_or(MediaType::Video);
-        let stream = self.input.as_ref().unwrap().streams().find(|stream| {
+        let input = self.input.borrow();
+        let stream = input.streams().find(|stream| {
             let codec = CodecContext::from_parameters(stream.parameters()).unwrap();
             codec.medium() == kind
         }).ok_or(ffmpeg::Error::StreamNotFound)?;
-        self.index = Some(stream.index());
+        self.stream_idx = stream.index();
         Ok(())
     }
 
-    pub fn video(&self) -> Result<(VideoDecoder, Context), ffmpeg::Error> {
-        let stream = self.stream()?;
+    pub fn video(&mut self) -> Result<(VideoDecoder, Context), ffmpeg::Error> {
+        let input = self.input.borrow();
+        let stream = match input.stream(self.stream_idx) {
+            Some(stream) => {
+                stream
+            },
+            None => return Err(ffmpeg::Error::StreamNotFound),
+        };
         let context = CodecContext::from_parameters(stream.parameters())?;
         let video = context.decoder().video()?;
-        let scaler = Context::get(
+        let context = Context::get(
             video.format(),
             video.width(),
             video.height(),
@@ -125,43 +117,43 @@ impl Video {
             video.height(),
             ContextFlags::BILINEAR,
         )?;
-        Ok((video, scaler))
+        Ok((video, context))
     }
+}
 
-    pub fn process_frames<F>(&mut self, mut process_frame: F) -> Result<(), ffmpeg::Error> 
-    where 
-        F: FnMut(&Frame, usize) -> bool,
-    {
-        let (mut video, mut scaler) = self.video()?;
-        let mut frame_index = 0;
+impl Driver for Video {
+    type Error = ffmpeg::Error;
 
-        let mut receive_frames =
-            |decoder: &mut decoder::Video| -> Result<bool, ffmpeg::Error> {
+    fn frames<P: FnMut(&RgbBuffer, usize) -> bool>(&mut self, mut process: P) -> Result<bool, Self::Error> {
+        let (mut video, mut context) = self.video()?;
+        let mut frame_idx: usize = 0;
+
+        let mut receive =
+            |decoder: &mut VideoDecoder, idx: usize| -> Result<bool, ffmpeg::Error> {
                 let mut decoded = Frame::empty();
                 while decoder.receive_frame(&mut decoded).is_ok() {
-                    let mut rgb_frame = Frame::empty();
-                    scaler.run(&decoded, &mut rgb_frame)?;
-                    let r = process_frame(&rgb_frame, frame_index);
-                    frame_index += 1;
-                    if !r {
+                    let mut frame = Frame::empty();
+                    // resize the frame
+                    context.run(&decoded, &mut frame)?;
+                    let frame = frame::image(&frame).unwrap();
+                    if !process(&frame, idx) {
                         return Ok(false);
                     }
                 }
                 Ok(true)
             };
-    
-        let input: &mut Input = self.input.as_mut().unwrap();
+
+        let mut input = self.input.borrow_mut();
         for (s, packet) in input.packets() {
-            if s.index() == self.index.unwrap() {
+            if s.index() == self.stream_idx {
                 video.send_packet(&packet)?;
-                if receive_frames(&mut video)? == false {
+                if receive(&mut video, frame_idx)? == false {
                     break;
                 }
+                frame_idx += 1;
             }
         }
         video.send_eof()?;
-        receive_frames(&mut video)?;
-    
-        Ok(())
+        Ok(true)
     }
 }
